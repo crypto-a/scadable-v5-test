@@ -1,0 +1,22 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "wifi.c"
+        "mqtt.c"
+        "log_sink.c"
+        "heartbeat.c"
+        "ota.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        esp_wifi
+        esp_event
+        esp_netif
+        nvs_flash
+        mqtt
+        json
+        esp_timer
+        mdns
+        app_update
+        esp_https_ota
+        esp_http_client
+)
