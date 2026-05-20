@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -17,6 +18,12 @@ esp_err_t scadable_client_post(const char *path, const char *json_body, size_t b
 
 const char *scadable_client_device_id(void);
 const char *scadable_client_firmware_version(void);
+
+// Cumulative byte counters tracked through the MQTT event pipeline.
+// Used by the heartbeat task to surface network throughput in the
+// dashboard. Both counters reset to zero on reboot.
+uint64_t scadable_client_tx_bytes(void);
+uint64_t scadable_client_rx_bytes(void);
 
 #ifdef __cplusplus
 }

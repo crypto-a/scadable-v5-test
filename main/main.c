@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -46,6 +48,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "boot · device=%s · firmware=%s", device_id, SCADABLE_FW_VERSION);
 
     ESP_ERROR_CHECK(wifi_start_and_wait(WIFI_SSID, WIFI_PASSWORD));
+
+    // Sync wall-clock via SNTP so heartbeats can carry a real UTC
+    // timestamp for the backend to compute end-to-end latency. We
+    // start it and move on — the heartbeat task tolerates an
+    // unsynced clock by emitting client_ts_ms=0.
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
 
     scadable_client_init(device_id, SCADABLE_FW_VERSION);
     log_sink_start_flush_task(device_id);

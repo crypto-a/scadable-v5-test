@@ -52,6 +52,15 @@ static esp_mqtt_client_handle_t s_mqtt   = NULL;
 static EventGroupHandle_t       s_evt    = NULL;
 static SemaphoreHandle_t        s_pubmux = NULL;
 
+// Cumulative byte counters. Approximate — we count topic + payload at
+// the MQTT envelope level which excludes the ~2-byte protocol header
+// per message. Good enough to show the dashboard a throughput trend.
+static uint64_t s_tx_bytes = 0;
+static uint64_t s_rx_bytes = 0;
+
+uint64_t scadable_client_tx_bytes(void) { return s_tx_bytes; }
+uint64_t scadable_client_rx_bytes(void) { return s_rx_bytes; }
+
 static void publish_status_online(void) {
     if (!s_mqtt) return;
     const char *body = "online";
@@ -86,6 +95,7 @@ static void mqtt_event_handler(void *args, esp_event_base_t base,
             break;
         case MQTT_EVENT_DATA:
             if (event && event->topic && event->data) {
+                s_rx_bytes += (uint64_t)event->topic_len + (uint64_t)event->data_len;
                 if (topic_ends_with(event->topic, event->topic_len, "/cmd/ota")) {
                     ESP_LOGI(TAG, "OTA command received (%d bytes)", event->data_len);
                     ota_dispatch(event->data, (size_t)event->data_len);
@@ -178,6 +188,11 @@ esp_err_t scadable_client_post(const char *path, const char *json_body, size_t b
 
     xSemaphoreTake(s_pubmux, portMAX_DELAY);
     int msg_id = esp_mqtt_client_publish(s_mqtt, topic, json_body, body_len, 1, 0);
+    if (msg_id >= 0) {
+        // Count topic + payload bytes outbound. Excludes the ~2-byte
+        // fixed MQTT header — close enough for a throughput indicator.
+        s_tx_bytes += (uint64_t)strlen(topic) + (uint64_t)body_len;
+    }
     xSemaphoreGive(s_pubmux);
 
     if (msg_id < 0) {
