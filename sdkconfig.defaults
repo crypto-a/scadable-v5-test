@@ -1,31 +1,20 @@
 # Target: ESP32 classic
 CONFIG_IDF_TARGET="esp32"
 
-# 4 MB flash (chip has it; default config caps at 2 MB)
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+# Stay on default 2MB flash + default partition table since OTA is parked.
+CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
 
-# Custom partition table with two OTA slots
-CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
-
-# Allow plain HTTP for OTA downloads (MinIO over :9000, no TLS in V1).
-CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
-
-# Larger main task stack — JSON building and log buffer flushes
+# Main task stack — we serialize a fair bit of JSON.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
-# MQTT outbox + buffer sizes large enough for ~12KB log batches
-CONFIG_MQTT_BUFFER_SIZE=16384
-CONFIG_MQTT_TASK_STACK_SIZE=8192
-
-# Disable log color codes so the log sink sees plain text it can parse
+# Disable log color codes so the log sink sees plain text.
 CONFIG_LOG_COLORS=n
-
-# Default log level
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
-# Reduce flash usage
+# HTTP client tunings — we POST to SCADABLE on heartbeat + log flush.
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n
+
+# Smaller image.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y

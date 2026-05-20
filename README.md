@@ -1,52 +1,89 @@
 # scadable-v5-test (firmware)
 
-ESP-IDF v5.1 firmware for ESP32 classic. This repo is the build target for the
-SCADABLE deployment platform — paste this URL into the dashboard's
-"New deployment" form to trigger a build + OTA push.
+Demo ESP-IDF v5.1 firmware for ESP32 classic. This repo is the build target
+for the SCADABLE dashboard — link it from any namespace's Settings page and
+the graph populates with commits, components, and (eventually) the live
+device data it produces.
 
-## What it does on boot
+## What this firmware does
 
-1. Connects to Wi-Fi (creds hardcoded in `main/main.c` for V1).
-2. Resolves the MQTT broker — either via mDNS (`scadable.local`) for local dev
-   or directly via the `SCADABLE_BROKER_HOST` compile-time define when set.
-3. Connects to EMQX (anonymous, no TLS) and starts three loops:
-   - **Heartbeat** every 5 s on `scadable/<device_id>/heartbeat`.
-   - **Log batch** every 60 s (or at 75 % of a 16 KB ring) on
-     `scadable/<device_id>/logs`.
-   - **OTA agent** subscribed to `scadable/<device_id>/ota/command`. Downloads
-     the URL with `esp_https_ota` and publishes progress on
-     `scadable/<device_id>/ota/status`. Restarts on success.
+On boot it connects to Wi-Fi and starts three tasks:
+
+- **`heartbeat`** — every 5 s, POSTs a JSON heartbeat to
+  `${SCADABLE_API_BASE}/api/v1/ingest/heartbeat` with the device ID,
+  firmware SHA, uptime, and free heap. Authenticated with the namespace's
+  bearer token (compile-time `SCADABLE_API_TOKEN`).
+- **`log_flush`** — a custom `esp_log_set_vprintf` sink captures every
+  `ESP_LOGx` call into a 16 KB RAM ring buffer. Every 30 s (or at 75 %
+  full) the buffer flushes to `/api/v1/ingest/logs` as a parsed array of
+  `{level, tag, message, uptime_ms}`.
+- **`diagnostics`** — a "feature" task that exists so the dashboard has
+  something interesting to detect. See the next section.
+
+There is **no MQTT and no OTA in this branch.** The build pipeline parks
+both intentionally; ingest is plain HTTPS. The original MQTT/OTA path lives
+in the project history if we ever turn it back on.
+
+## Intentional bugs (so the anomaly detector has work to do)
+
+`main/buggy.c` contains three deliberate bugs documented inline:
+
+1. **Heap leak** in `metrics_sample()` — caches a 64-byte buffer on every
+   call and "loses" the previous pointer. The SCADABLE backend's sliding-
+   window linear regression on `free_heap_bytes` flags this as a
+   `heap_leak` warning within minutes; once the projected OOM is under an
+   hour it escalates to `critical`.
+2. **Stack overflow risk** in `telemetry_explore()` — unbounded recursion
+   bounded only by a synthetic budget. When the budget is large enough the
+   task's 4 KB stack runs out, the watchdog fires, the device reboots, and
+   SCADABLE picks it up via the uptime regression on the next heartbeat
+   (`reboots` anomaly, escalating to `boot_loop` after three in an hour).
+3. **Unchecked `strcpy`** in `tag_record()` — copies an untrusted tag into
+   a fixed 16-byte buffer with no length check. A code-analysis pass (or
+   Grok during repo indexing) surfaces this without the device ever having
+   to misbehave.
+
+Together these give a real, observable timeline:
+
+```
+t+0      device boots, heartbeats flow
+t+3m     heap_leak warning fires (~64 B/3s leak, slope detected)
+t+15m    OOM projection drops below 1 h → escalates to critical
+t+~?     stack overflow → reboot → anomaly fires
+t+~?     reboot count ≥ 3 in 60 min → boot_loop critical
+```
 
 ## Build
 
 ```bash
 . ~/esp/esp-idf/export.sh
-export SCADABLE_BROKER_HOST=<broker-ip>   # bakes broker into binary
+
+# wiring (the dashboard's Settings page shows these for your namespace)
+export SCADABLE_API_BASE=http://146.190.253.86:8080
+export SCADABLE_API_TOKEN=sk_...
+
 idf.py build
 idf.py -p /dev/cu.usbserial-XXX flash monitor
 ```
 
-`firmware_version` is the git short SHA, baked at configure time.
+The firmware version baked into each binary is the git short SHA, which is
+what shows up in the dashboard graph under "Firmware".
 
-## Partition layout
+## Layout
 
-`partitions.csv` provisions two 1.5 MB OTA slots on 4 MB flash (ota_0 + ota_1)
-so the device can apply updates without bricking — failed images roll back.
-
-## OTA command payload
-
-```json
-{
-  "version": "abc1234",
-  "url": "http://<minio-host>:9000/scadable-firmware/abc1234.bin"
-}
+```
+.
+├── CMakeLists.txt        # top-level; bakes git SHA + env into binary
+├── sdkconfig.defaults    # 2 MB flash, default partition table, no OTA
+└── main/
+    ├── CMakeLists.txt
+    ├── idf_component.yml
+    ├── main.c
+    ├── wifi.c / .h       # Wi-Fi association + retry
+    ├── scadable_client.c / .h    # HTTPS POST wrapper, bearer auth
+    ├── heartbeat.c / .h          # 5 s heartbeat task
+    ├── log_sink.c / .h           # 16 KB ring + 30 s flush task
+    └── buggy.c / .h              # the deliberate bugs
 ```
 
-## OTA status payloads
-
-```json
-{ "state": "downloading", "version": "abc1234" }
-{ "state": "progress",    "version": "abc1234", "details": "40% (350000/877000)" }
-{ "state": "success",     "version": "abc1234", "details": "restarting" }
-{ "state": "failed",      "version": "abc1234", "details": "<error name>" }
-```
+That's the whole demo firmware.
