@@ -1,4 +1,4 @@
-## IDF Component Manager dependencies for the SCADABLE demo firmware.
-## Every entry shows up as a Component node in the dashboard graph.
-dependencies:
-  espressif/esp-mock-sensor: "^1.0.0"
+## SCADABLE demo firmware — only the IDF bundled libs are used (esp_wifi,
+## esp_event, esp_http_client, freertos, nvs_flash, cjson, esp_timer).
+## Grok identifies these from the source and surfaces them as Component
+## nodes in the dashboard graph without us having to redeclare them here.

@@ -1,20 +1,34 @@
 # Target: ESP32 classic
 CONFIG_IDF_TARGET="esp32"
 
-# Stay on default 2MB flash + default partition table since OTA is parked.
-CONFIG_ESPTOOLPY_FLASHSIZE_2MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="2MB"
+# 4MB flash with OTA partitions (factory + ota_0 + ota_1).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_PARTITION_TABLE_TWO_OTA=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions_two_ota.csv"
 
 # Main task stack — we serialize a fair bit of JSON.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
-# Disable log color codes so the log sink sees plain text.
+# Logs — plain text so the log sink can parse them.
 CONFIG_LOG_COLORS=n
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
-# HTTP client tunings — we POST to SCADABLE on heartbeat + log flush.
-CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n
+# Embedded certificate bundle. Trusts the major public CAs including
+# Let's Encrypt, so both esp-mqtt and esp_https_ota can verify
+# mqtt-yyz.scadable.com without shipping a cert.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# esp-mqtt + transport SSL.
+CONFIG_MQTT_PROTOCOL_311=y
+CONFIG_MQTT_TRANSPORT_SSL=y
+CONFIG_MQTT_TRANSPORT_WEBSOCKET=n
+
+# esp_https_ota: allow HTTP (non-TLS) URLs since our MinIO endpoint is
+# plain :9000. Don't require code-signed images.
+CONFIG_OTA_ALLOW_HTTP=y
 
 # Smaller image.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y

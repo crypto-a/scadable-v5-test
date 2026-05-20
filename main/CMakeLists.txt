@@ -5,6 +5,7 @@ idf_component_register(
         "log_sink.c"
         "heartbeat.c"
         "scadable_client.c"
+        "ota.c"
         "buggy.c"
     INCLUDE_DIRS "."
     REQUIRES
@@ -14,5 +15,9 @@ idf_component_register(
         nvs_flash
         json
         esp_timer
+        mqtt
+        esp-tls
         esp_http_client
+        esp_https_ota
+        app_update
 )
