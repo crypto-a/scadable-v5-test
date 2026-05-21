@@ -177,25 +177,20 @@ static esp_err_t form_get_handler(httpd_req_t *req) {
     return httpd_resp_sendstr(req, FORM_PAGE);
 }
 
-static esp_err_t form_post_handler(httpd_req_t *req) {
-    if (req->content_len > 512) {
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "payload too large");
-    }
-    char body[513] = {0};
-    int total = 0;
-    while (total < req->content_len) {
-        int n = httpd_req_recv(req, body + total, req->content_len - total);
-        if (n <= 0) return ESP_FAIL;
-        total += n;
-    }
-    body[total] = '\0';
+// Common save path used by both POST /save and GET /save (iOS Captive
+// Network Assistant has been observed to convert form POSTs to GETs).
+// `payload` is form-urlencoded (e.g. "ssid=Foo&pass=bar"); `len` is
+// its length.
+static esp_err_t do_save(httpd_req_t *req, const char *payload, int len) {
+    ESP_LOGI(TAG, "save request (len=%d): '%.*s'", len, len > 80 ? 80 : len, payload);
 
     char ssid[64] = {0};
     char pass[96] = {0};
-    if (!form_get(body, "ssid", ssid, sizeof(ssid)) || ssid[0] == '\0') {
+    if (!form_get(payload, "ssid", ssid, sizeof(ssid)) || ssid[0] == '\0') {
+        ESP_LOGW(TAG, "save: ssid missing or empty");
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid is required");
     }
-    form_get(body, "pass", pass, sizeof(pass)); // password is optional (open networks)
+    form_get(payload, "pass", pass, sizeof(pass)); // optional for open networks
 
     esp_err_t err = provisioning_save_credentials(ssid, pass);
     if (err != ESP_OK) {
@@ -207,11 +202,52 @@ static esp_err_t form_post_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
     httpd_resp_sendstr(req, SAVED_PAGE);
 
-    // Signal the main task that we're done. Give the browser a beat
-    // to receive the response before we tear down the AP.
+    // Let the browser finish receiving the response before we tear
+    // down the AP and reboot into STA mode.
     vTaskDelay(pdMS_TO_TICKS(500));
     xEventGroupSetBits(s_done_group, DONE_BIT);
     return ESP_OK;
+}
+
+static esp_err_t form_post_handler(httpd_req_t *req) {
+    if (req->content_len > 512) {
+        ESP_LOGW(TAG, "POST /save payload too large: %d bytes", (int)req->content_len);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "payload too large");
+    }
+    char body[513] = {0};
+    int total = 0;
+    while (total < req->content_len) {
+        int n = httpd_req_recv(req, body + total, req->content_len - total);
+        if (n <= 0) {
+            ESP_LOGW(TAG, "POST /save recv failed at %d/%d", total, (int)req->content_len);
+            return ESP_FAIL;
+        }
+        total += n;
+    }
+    body[total] = '\0';
+    return do_save(req, body, total);
+}
+
+// GET /save — same as POST but with credentials in the query string.
+// Registered because iOS's Captive Network Assistant rewrites form
+// POSTs to GETs when it's the browser. Also fires if someone uses
+// curl with -G.
+static esp_err_t form_get_save_handler(httpd_req_t *req) {
+    size_t qlen = httpd_req_get_url_query_len(req);
+    if (qlen == 0) {
+        ESP_LOGW(TAG, "GET /save: no query string");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing ssid");
+    }
+    if (qlen > 512) {
+        ESP_LOGW(TAG, "GET /save: query too long (%d bytes)", (int)qlen);
+        return httpd_resp_send_err(req, HTTPD_414_URI_TOO_LONG, "query too long");
+    }
+    char query[513] = {0};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        ESP_LOGW(TAG, "GET /save: get_url_query_str failed");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad query");
+    }
+    return do_save(req, query, (int)qlen);
 }
 
 // ─── Server bring-up ───────────────────────────────────────────────────
@@ -224,11 +260,13 @@ static void start_http_server(void) {
         ESP_LOGE(TAG, "failed to start http server");
         return;
     }
-    httpd_uri_t get  = { .uri = "/",     .method = HTTP_GET,  .handler = form_get_handler };
-    httpd_uri_t post = { .uri = "/save", .method = HTTP_POST, .handler = form_post_handler };
-    httpd_register_uri_handler(s_server, &get);
-    httpd_register_uri_handler(s_server, &post);
-    ESP_LOGI(TAG, "http portal up on http://192.168.4.1/");
+    httpd_uri_t get_root  = { .uri = "/",     .method = HTTP_GET,  .handler = form_get_handler };
+    httpd_uri_t post_save = { .uri = "/save", .method = HTTP_POST, .handler = form_post_handler };
+    httpd_uri_t get_save  = { .uri = "/save", .method = HTTP_GET,  .handler = form_get_save_handler };
+    httpd_register_uri_handler(s_server, &get_root);
+    httpd_register_uri_handler(s_server, &post_save);
+    httpd_register_uri_handler(s_server, &get_save);
+    ESP_LOGI(TAG, "http portal up on http://192.168.4.1/  (GET /, POST /save, GET /save)");
 }
 
 static void stop_http_server(void) {
