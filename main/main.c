@@ -20,9 +20,6 @@
 
 static const char *TAG = "app";
 
-#define WIFI_SSID     "Velocity"
-#define WIFI_PASSWORD "furtherfaster"
-
 #ifndef SCADABLE_FW_VERSION
 #define SCADABLE_FW_VERSION "unknown"
 #endif
@@ -48,7 +45,12 @@ void app_main(void) {
     format_device_id(device_id, sizeof(device_id));
     ESP_LOGI(TAG, "boot · device=%s · firmware=%s · rollout-test", device_id, SCADABLE_FW_VERSION);
 
-    ESP_ERROR_CHECK(wifi_start_and_wait(WIFI_SSID, WIFI_PASSWORD));
+    // wifi_connect_or_provision reads creds from NVS. On first boot
+    // (no creds) or after repeated STA failures it brings up a
+    // SoftAP + HTTP portal so the user can enter Wi-Fi creds from
+    // their phone, then reboots into STA mode. Doesn't return until
+    // we have an IP.
+    ESP_ERROR_CHECK(wifi_connect_or_provision());
 
     // Sync wall-clock via SNTP so heartbeats can carry a real UTC
     // timestamp for the backend to compute end-to-end latency. We
