@@ -5,6 +5,7 @@ idf_component_register(
         "log_sink.c"
         "heartbeat.c"
         "scadable_client.c"
+        "scadable_test.c"
         "ota.c"
         "config.c"
         "buggy.c"

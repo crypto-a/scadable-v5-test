@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "ota.h"
+#include "scadable_test.h"
 
 static const char *TAG = "scadable_client";
 
@@ -103,6 +104,9 @@ static void mqtt_event_handler(void *args, esp_event_base_t base,
                 } else if (topic_ends_with(event->topic, event->topic_len, "/cmd/config")) {
                     ESP_LOGI(TAG, "config command received (%d bytes)", event->data_len);
                     config_apply(event->data, (size_t)event->data_len);
+                } else if (topic_ends_with(event->topic, event->topic_len, "/cmd/test")) {
+                    ESP_LOGI(TAG, "test command received (%d bytes)", event->data_len);
+                    scadable_tests_dispatch(event->data, (size_t)event->data_len);
                 } else {
                     ESP_LOGI(TAG, "unhandled msg on topic (len=%d)", event->topic_len);
                 }

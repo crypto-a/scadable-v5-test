@@ -1,0 +1,25 @@
+# SCADABLE diagnostic tests.
+#
+# Each entry declares one test that can be triggered from the
+# dashboard. The id must match the registration in
+# main/scadable_test.c. The build pipeline ships this list to the
+# backend with the deployment so the dashboard knows what's available
+# for any device running this firmware sha.
+#
+# Test types (V1): local — runs entirely on the device.
+# Coming later:    api    — backend hits an HTTP endpoint
+#                  net    — device tests its own network reachability
+
+tests:
+  - id: heap_available
+    type: local
+    description: Free heap is above 30 KB
+  - id: wifi_connected
+    type: local
+    description: Device is associated to its AP
+  - id: uptime_minimum
+    type: local
+    description: Device has been up at least 5 s
+  - id: self_diagnostic
+    type: local
+    description: Scratch-memory read/write sanity
