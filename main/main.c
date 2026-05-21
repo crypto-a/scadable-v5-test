@@ -45,7 +45,7 @@ void app_main(void) {
 
     char device_id[40];
     format_device_id(device_id, sizeof(device_id));
-    ESP_LOGI(TAG, "boot · device=%s · firmware=%s", device_id, SCADABLE_FW_VERSION);
+    ESP_LOGI(TAG, "boot · device=%s · firmware=%s · rollout-test", device_id, SCADABLE_FW_VERSION);
 
     ESP_ERROR_CHECK(wifi_start_and_wait(WIFI_SSID, WIFI_PASSWORD));
 
