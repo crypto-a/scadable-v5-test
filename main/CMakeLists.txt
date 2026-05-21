@@ -8,7 +8,6 @@ idf_component_register(
         "scadable_test.c"
         "ota.c"
         "config.c"
-        "buggy.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

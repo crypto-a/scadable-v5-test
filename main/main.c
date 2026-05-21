@@ -12,7 +12,6 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
-#include "buggy.h"
 #include "config.h"
 #include "heartbeat.h"
 #include "log_sink.h"
@@ -62,7 +61,6 @@ void app_main(void) {
     scadable_client_init(device_id, SCADABLE_FW_VERSION);
     log_sink_start_flush_task(device_id);
     heartbeat_start();
-    buggy_diagnostics_start();
 
     // Liveness ticker so the dashboard sees a steady log stream.
     int counter = 0;
