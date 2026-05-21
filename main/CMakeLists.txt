@@ -6,6 +6,7 @@ idf_component_register(
         "heartbeat.c"
         "scadable_client.c"
         "ota.c"
+        "config.c"
         "buggy.c"
     INCLUDE_DIRS "."
     REQUIRES

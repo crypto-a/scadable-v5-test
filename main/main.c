@@ -13,6 +13,7 @@
 #include "nvs_flash.h"
 
 #include "buggy.h"
+#include "config.h"
 #include "heartbeat.h"
 #include "log_sink.h"
 #include "scadable_client.h"
@@ -42,6 +43,7 @@ void app_main(void) {
     }
 
     log_sink_install();
+    config_init();
 
     char device_id[40];
     format_device_id(device_id, sizeof(device_id));

@@ -26,6 +26,7 @@
 #include "freertos/semphr.h"
 #include "mqtt_client.h"
 
+#include "config.h"
 #include "ota.h"
 
 static const char *TAG = "scadable_client";
@@ -99,6 +100,9 @@ static void mqtt_event_handler(void *args, esp_event_base_t base,
                 if (topic_ends_with(event->topic, event->topic_len, "/cmd/ota")) {
                     ESP_LOGI(TAG, "OTA command received (%d bytes)", event->data_len);
                     ota_dispatch(event->data, (size_t)event->data_len);
+                } else if (topic_ends_with(event->topic, event->topic_len, "/cmd/config")) {
+                    ESP_LOGI(TAG, "config command received (%d bytes)", event->data_len);
+                    config_apply(event->data, (size_t)event->data_len);
                 } else {
                     ESP_LOGI(TAG, "unhandled msg on topic (len=%d)", event->topic_len);
                 }

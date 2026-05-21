@@ -11,11 +11,11 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "config.h"
 #include "scadable_client.h"
 
 #define RING_SIZE              (16 * 1024)
 #define FLUSH_HIGH_WATERMARK   ((RING_SIZE * 3) / 4)
-#define FLUSH_INTERVAL_MS      30000
 
 static char s_ring[RING_SIZE];
 static size_t s_ring_head = 0;
@@ -113,7 +113,9 @@ static void flush_task(void *arg) {
     flush_ctx_t *ctx = (flush_ctx_t *)arg;
     static char snapshot[RING_SIZE];
     while (1) {
-        xSemaphoreTake(s_flush_signal, pdMS_TO_TICKS(FLUSH_INTERVAL_MS));
+        // Wait up to the user-configured log flush interval; high-watermark
+        // can signal earlier if the buffer fills up.
+        xSemaphoreTake(s_flush_signal, pdMS_TO_TICKS(config_log_flush_interval_ms()));
 
         size_t snap_len = 0;
         if (xSemaphoreTake(s_ring_mux, pdMS_TO_TICKS(200)) == pdTRUE) {

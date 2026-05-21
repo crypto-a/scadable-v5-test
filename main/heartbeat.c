@@ -34,6 +34,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "config.h"
 #include "scadable_client.h"
 
 static const char *TAG = "heartbeat";
@@ -147,7 +148,9 @@ static void heartbeat_task(void *arg) {
         }
         cJSON_Delete(root);
 
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        // Re-read the configured interval every iteration so a cmd/config
+        // update takes effect on the very next tick.
+        vTaskDelay(pdMS_TO_TICKS(config_heartbeat_interval_ms()));
     }
 }
 
