@@ -14,6 +14,7 @@
 
 #include "config.h"
 #include "heartbeat.h"
+#include "identity.h"
 #include "log_sink.h"
 #include "scadable_client.h"
 #include "wifi.h"
@@ -41,9 +42,20 @@ void app_main(void) {
     log_sink_install();
     config_init();
 
-    char device_id[40];
-    format_device_id(device_id, sizeof(device_id));
-    ESP_LOGI(TAG, "boot · device=%s · firmware=%s · rollout-test", device_id, SCADABLE_FW_VERSION);
+    // SCADABLE-provisioned identity (cert + CN) lives in NVS, written
+    // at flash time by the browser flasher. Use it as the MQTT
+    // client_id so the broker (post-mTLS flip) ties the connection to
+    // a verified certificate. Legacy devices fall back to the
+    // MAC-derived "esp32_xxxx" so they keep working until reflash.
+    const scadable_identity_t *id = identity_load();
+    char device_id[64];
+    if (id->ok) {
+        strncpy(device_id, id->common_name, sizeof(device_id) - 1);
+        device_id[sizeof(device_id) - 1] = '\0';
+    } else {
+        format_device_id(device_id, sizeof(device_id));
+    }
+    ESP_LOGI(TAG, "boot · device=%s · firmware=%s · provisioned=%d", device_id, SCADABLE_FW_VERSION, id->ok ? 1 : 0);
 
     // wifi_connect_or_provision reads creds from NVS. On first boot
     // (no creds) or after repeated STA failures it brings up a

@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "wifi.c"
         "provisioning.c"
+        "identity.c"
         "log_sink.c"
         "heartbeat.c"
         "scadable_client.c"
