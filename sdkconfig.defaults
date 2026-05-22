@@ -37,3 +37,10 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 
 # Smaller image.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# Provisioning HTTP portal — Safari + iOS CNA send ~1-2 KB of request
+# headers (User-Agent, Accept-*, captive-portal probes), well above
+# esp_http_servers default 512-byte cap. Bump both header and URI
+# limits so the form POST/GET doesn't bounce with 431/414.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024
