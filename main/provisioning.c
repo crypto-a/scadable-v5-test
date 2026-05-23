@@ -146,19 +146,53 @@ static const char FORM_PAGE[] =
     "h1{font-size:16px;margin-bottom:6px}"
     "p{font-size:12px;color:#888;margin-bottom:20px;line-height:1.5}"
     "label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:#666;margin-bottom:6px}"
-    "input{width:100%;background:#0c0c0c;border:1px solid #222;color:#e8e8e8;padding:10px 12px;border-radius:6px;"
-    "font:13px monospace;margin-bottom:16px}"
-    "input:focus{outline:none;border-color:rgba(34,197,94,.4)}"
-    "button{width:100%;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.4);color:#22c55e;"
+    "input,select{width:100%;background:#0c0c0c;border:1px solid #222;color:#e8e8e8;padding:10px 12px;border-radius:6px;"
+    "font:13px monospace;margin-bottom:12px;appearance:none;-webkit-appearance:none}"
+    "input:focus,select:focus{outline:none;border-color:rgba(34,197,94,.4)}"
+    ".row{display:flex;align-items:center;gap:8px;margin-bottom:16px}"
+    ".row input{margin-bottom:0}"
+    ".rescan{flex:0 0 auto;width:auto;padding:8px 10px;font-size:11px;background:#1a1a1a;border-color:#333;cursor:pointer}"
+    ".rescan:hover{border-color:rgba(34,197,94,.4);color:#22c55e}"
+    ".hint{font-size:10px;color:#555;margin:-8px 0 16px}"
+    "button.go{width:100%;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.4);color:#22c55e;"
     "padding:12px;border-radius:6px;font:bold 12px sans-serif;letter-spacing:.1em;text-transform:uppercase;cursor:pointer}"
-    "button:hover{background:rgba(34,197,94,.2)}"
+    "button.go:hover{background:rgba(34,197,94,.2)}"
     "</style></head><body><div class=card>"
     "<div class=brand><span class=dot><i></i></span><b>SCADABLE</b></div>"
-    "<h1>Connect to Wi-Fi</h1><p>Enter your network credentials. The device will join your Wi-Fi and come online in your dashboard.</p>"
+    "<h1>Connect to Wi-Fi</h1><p>Pick your network from the list, or type the name manually if it's hidden. The device will join your Wi-Fi and come online in your dashboard.</p>"
     "<form method=post action=/save>"
-    "<label>Network name (SSID)</label><input name=ssid required maxlength=32 autofocus>"
-    "<label>Password</label><input name=pass type=password maxlength=64>"
-    "<button>Connect</button></form></div></body></html>";
+    "<label>Nearby networks</label>"
+    "<div class=row>"
+    "<select id=netlist onchange=\"document.getElementsByName('ssid')[0].value=this.value\">"
+    "<option value=''>scanning…</option></select>"
+    "<button type=button class=rescan onclick=loadScan()>↻</button>"
+    "</div>"
+    "<label>Network name (SSID)</label>"
+    "<input name=ssid required maxlength=32 autofocus placeholder='or type a hidden network'>"
+    "<label>Password</label>"
+    "<input name=pass type=password maxlength=64 placeholder='leave blank for open networks'>"
+    "<button class=go>Connect</button></form>"
+    "<script>"
+    "function loadScan(){"
+    "var s=document.getElementById('netlist');"
+    "s.innerHTML='<option value=\"\">scanning…</option>';"
+    "fetch('/scan').then(function(r){return r.json()}).then(function(nets){"
+    "var seen={};var list=[];"
+    "for(var i=0;i<nets.length;i++){var n=nets[i];if(!n.ssid)continue;"
+    "if(!seen[n.ssid]||seen[n.ssid].rssi<n.rssi){seen[n.ssid]=n}}"
+    "for(var k in seen)list.push(seen[k]);"
+    "list.sort(function(a,b){return b.rssi-a.rssi});"
+    "s.innerHTML='<option value=\"\">— pick one —</option>';"
+    "for(var j=0;j<list.length;j++){"
+    "var o=document.createElement('option');o.value=list[j].ssid;"
+    "var lock=list[j].open?'':' 🔒';"
+    "o.textContent=list[j].ssid+lock+' ('+list[j].rssi+' dBm)';"
+    "s.appendChild(o)}"
+    "if(!list.length){s.innerHTML='<option value=\"\">(no networks found)</option>'}"
+    "}).catch(function(){s.innerHTML='<option value=\"\">(scan failed — type below)</option>'})}"
+    "loadScan();"
+    "</script>"
+    "</div></body></html>";
 
 static const char SAVED_PAGE[] =
     "<!doctype html><html><head><meta charset=utf-8>"
@@ -175,6 +209,77 @@ static const char SAVED_PAGE[] =
 static esp_err_t form_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_sendstr(req, FORM_PAGE);
+}
+
+// /scan — synchronous Wi-Fi scan, returns a JSON array of nearby APs.
+// The form's JS calls this to populate the network dropdown. We dedupe
+// by SSID and sort by RSSI on the client side. APSTA mode is required
+// — see provisioning_run_until_credentials below.
+static esp_err_t scan_handler(httpd_req_t *req) {
+    wifi_scan_config_t cfg = {
+        .ssid = NULL, .bssid = NULL, .channel = 0,
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = { .active = { .min = 100, .max = 250 } },
+    };
+    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "scan failed");
+    }
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 30) n = 30;
+
+    wifi_ap_record_t *recs = NULL;
+    if (n > 0) {
+        recs = calloc(n, sizeof(wifi_ap_record_t));
+        if (!recs) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        }
+        esp_wifi_scan_get_ap_records(&n, recs);
+    }
+
+    // Each AP entry is ~80 bytes of JSON max → 30 × 100 = 3000. 4 KB safe.
+    char *buf = malloc(4096);
+    if (!buf) {
+        free(recs);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    int pos = 0;
+    pos += snprintf(buf + pos, 4096 - pos, "[");
+    for (uint16_t i = 0; i < n; i++) {
+        // Escape backslashes + double-quotes in the SSID — the rest of
+        // ASCII control chars are unusual in SSIDs, but the JSON RFC
+        // requires escaping if present.
+        char ssid_esc[68];
+        const char *src = (const char *)recs[i].ssid;
+        int e = 0;
+        for (int s = 0; src[s] && e + 2 < (int)sizeof(ssid_esc); s++) {
+            if (src[s] == '"' || src[s] == '\\') {
+                ssid_esc[e++] = '\\';
+            }
+            ssid_esc[e++] = src[s];
+        }
+        ssid_esc[e] = '\0';
+
+        bool open = (recs[i].authmode == WIFI_AUTH_OPEN);
+        int n_written = snprintf(buf + pos, 4096 - pos,
+                                 "%s{\"ssid\":\"%s\",\"rssi\":%d,\"open\":%s}",
+                                 i ? "," : "", ssid_esc, recs[i].rssi,
+                                 open ? "true" : "false");
+        if (n_written <= 0 || n_written >= 4096 - pos) {
+            break; // ran out of buffer; ship what we have
+        }
+        pos += n_written;
+    }
+    if (pos < 4096 - 1) {
+        pos += snprintf(buf + pos, 4096 - pos, "]");
+    }
+    free(recs);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_send(req, buf, pos);
+    free(buf);
+    return err;
 }
 
 // Common save path used by both POST /save and GET /save (iOS Captive
@@ -263,10 +368,12 @@ static void start_http_server(void) {
     httpd_uri_t get_root  = { .uri = "/",     .method = HTTP_GET,  .handler = form_get_handler };
     httpd_uri_t post_save = { .uri = "/save", .method = HTTP_POST, .handler = form_post_handler };
     httpd_uri_t get_save  = { .uri = "/save", .method = HTTP_GET,  .handler = form_get_save_handler };
+    httpd_uri_t get_scan  = { .uri = "/scan", .method = HTTP_GET,  .handler = scan_handler };
     httpd_register_uri_handler(s_server, &get_root);
     httpd_register_uri_handler(s_server, &post_save);
     httpd_register_uri_handler(s_server, &get_save);
-    ESP_LOGI(TAG, "http portal up on http://192.168.4.1/  (GET /, POST /save, GET /save)");
+    httpd_register_uri_handler(s_server, &get_scan);
+    ESP_LOGI(TAG, "http portal up on http://192.168.4.1/  (GET /, POST/GET /save, GET /scan)");
 }
 
 static void stop_http_server(void) {
@@ -290,7 +397,11 @@ esp_err_t provisioning_run_until_credentials(void) {
     err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
 
+    // APSTA mode: AP for the portal, STA for scanning nearby networks.
+    // The STA interface is created but never configured to join a
+    // specific SSID — we only use it via esp_wifi_scan_start().
     esp_netif_create_default_wifi_ap();
+    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&init);
@@ -309,7 +420,7 @@ esp_err_t provisioning_run_until_credentials(void) {
     ap_cfg.ap.authmode       = WIFI_AUTH_OPEN;
     ap_cfg.ap.channel        = 1;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "softAP up: SSID=%s", ssid);
