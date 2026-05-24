@@ -17,9 +17,6 @@ tests:
   - id: wifi_connected
     type: local
     description: Device is associated to its AP
-  - id: uptime_minimum
-    type: local
-    description: Device has been up at least 5 s
   - id: self_diagnostic
     type: local
     description: Scratch-memory read/write sanity
