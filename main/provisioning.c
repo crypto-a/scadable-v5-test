@@ -12,9 +12,11 @@
 //   - SoftAP is open (no password) for V1. The credential-entry page
 //     is HTTP, not HTTPS — fine on a one-hop link the user is in
 //     control of, and avoids the cert-trust UX problem.
-//   - We don't run a captive-portal DNS hijacker. The user just types
-//     192.168.4.1 in their browser. Adding one is ~80 LOC and worth
-//     it later.
+//   - Captive portal: we run a tiny DNS hijacker on UDP/53 that
+//     resolves every name to 192.168.4.1, and a wildcard HTTP
+//     fall-through that serves the provisioning page for any URI.
+//     Together these trigger iOS Captive Network Assistant + Android
+//     Wi-Fi assistant to auto-pop the portal on join.
 
 #include "provisioning.h"
 
@@ -30,6 +32,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -40,6 +43,7 @@ static const char *NS   = "scadable_cfg";
 
 static EventGroupHandle_t s_done_group;
 static httpd_handle_t     s_server;
+static TaskHandle_t       s_dns_task;
 
 // ─── NVS helpers ───────────────────────────────────────────────────────
 
@@ -355,11 +359,104 @@ static esp_err_t form_get_save_handler(httpd_req_t *req) {
     return do_save(req, query, (int)qlen);
 }
 
+// captive_404_handler is invoked by the HTTP server when an incoming
+// URI doesn't match any registered handler. Apple's Captive Network
+// Assistant probes http://captive.apple.com/hotspot-detect.html on
+// Wi-Fi join and expects a plain "Success" body; anything else
+// triggers the portal popup. Android probes /generate_204 and
+// expects a 204. Serving the provisioning HTML with status 200 here
+// makes both platforms pop the portal automatically the moment the
+// user joins the SCADABLE-XXXXXX network.
+static esp_err_t captive_404_handler(httpd_req_t *req, httpd_err_code_t err) {
+    (void)err;
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_sendstr(req, FORM_PAGE);
+}
+
+// ─── DNS hijacker ──────────────────────────────────────────────────────
+//
+// The captive-portal popup only works if the OS's probe request
+// actually reaches us — which only happens if the DNS lookup for
+// (e.g.) captive.apple.com resolves to our AP. We bind UDP/53 and
+// reply to every A query with 192.168.4.1.
+//
+// The reply is built by patching the original query: copy the
+// transaction ID + question section, set the response bit + RA,
+// bump ANCOUNT to 1, and append a 16-byte answer using a DNS
+// compression pointer to refer back to the question name. That keeps
+// us under ~80 LOC instead of pulling in a full resolver.
+
+static void dns_hijack_task(void *arg) {
+    (void)arg;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "dns socket");
+        vTaskDelete(NULL);
+        return;
+    }
+    struct sockaddr_in addr = {
+        .sin_family      = AF_INET,
+        .sin_port        = htons(53),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        ESP_LOGE(TAG, "dns bind: %d", errno);
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+    ESP_LOGI(TAG, "dns hijacker up on udp/53 (all queries → 192.168.4.1)");
+
+    uint8_t buf[512];
+    for (;;) {
+        struct sockaddr_in src;
+        socklen_t srclen = sizeof(src);
+        int n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&src, &srclen);
+        if (n < 12) continue;            // shorter than a DNS header
+        if (n + 16 > (int)sizeof(buf)) continue;  // refuse oversized queries
+
+        // Flip header → response. Leave transaction ID (buf[0..1]),
+        // RD bit, and QDCOUNT (buf[4..5]) intact.
+        buf[2] = 0x81;  // QR=1, RD copied
+        buf[3] = 0x80;  // RA=1, RCODE=0
+        buf[6] = 0; buf[7] = 1;   // ANCOUNT=1
+        buf[8] = 0; buf[9] = 0;   // NSCOUNT=0
+        buf[10] = 0; buf[11] = 0; // ARCOUNT=0
+
+        // Append answer: name=pointer-to-offset-12, type=A, class=IN,
+        // TTL=60, rdlength=4, rdata=192.168.4.1.
+        uint8_t *a = buf + n;
+        a[0]  = 0xc0; a[1]  = 0x0c;
+        a[2]  = 0x00; a[3]  = 0x01;
+        a[4]  = 0x00; a[5]  = 0x01;
+        a[6]  = 0x00; a[7]  = 0x00; a[8] = 0x00; a[9] = 60;
+        a[10] = 0x00; a[11] = 0x04;
+        a[12] = 192; a[13] = 168; a[14] = 4; a[15] = 1;
+
+        sendto(sock, buf, n + 16, 0, (struct sockaddr *)&src, srclen);
+    }
+}
+
+static void start_dns_hijacker(void) {
+    if (s_dns_task) return;
+    xTaskCreate(dns_hijack_task, "dns_hijack", 3072, NULL, 3, &s_dns_task);
+}
+
+static void stop_dns_hijacker(void) {
+    if (s_dns_task) {
+        vTaskDelete(s_dns_task);
+        s_dns_task = NULL;
+    }
+}
+
 // ─── Server bring-up ───────────────────────────────────────────────────
 
 static void start_http_server(void) {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
+    // Slightly larger backlog so a flurry of captive-portal probes
+    // (iOS often fires three or four in parallel) doesn't get refused.
+    cfg.max_open_sockets = 7;
 
     if (httpd_start(&s_server, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "failed to start http server");
@@ -373,7 +470,12 @@ static void start_http_server(void) {
     httpd_register_uri_handler(s_server, &post_save);
     httpd_register_uri_handler(s_server, &get_save);
     httpd_register_uri_handler(s_server, &get_scan);
-    ESP_LOGI(TAG, "http portal up on http://192.168.4.1/  (GET /, POST/GET /save, GET /scan)");
+
+    // Wildcard fall-through so captive-portal probes (any host, any
+    // path) get the provisioning page instead of a 404.
+    httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, captive_404_handler);
+
+    ESP_LOGI(TAG, "http portal up on http://192.168.4.1/  (GET /, POST/GET /save, GET /scan, * → form)");
 }
 
 static void stop_http_server(void) {
@@ -426,10 +528,12 @@ esp_err_t provisioning_run_until_credentials(void) {
     ESP_LOGI(TAG, "softAP up: SSID=%s", ssid);
 
     start_http_server();
+    start_dns_hijacker();
 
     // Block until form_post_handler signals completion.
     xEventGroupWaitBits(s_done_group, DONE_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
 
+    stop_dns_hijacker();
     stop_http_server();
     esp_wifi_stop();
     return ESP_OK;
