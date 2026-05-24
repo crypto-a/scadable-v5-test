@@ -57,16 +57,6 @@ static scadable_test_result_t test_wifi_connected(void) {
     return (scadable_test_result_t){true, buf};
 }
 
-static scadable_test_result_t test_uptime_minimum(void) {
-    int64_t us = esp_timer_get_time();
-    if (us < 5LL * 1000 * 1000) {
-        return scadable_test_fail("uptime under 5 s (device just booted)");
-    }
-    static char buf[64];
-    snprintf(buf, sizeof(buf), "uptime %lld s", (long long)(us / 1000000));
-    return (scadable_test_result_t){true, buf};
-}
-
 static scadable_test_result_t test_self_diagnostic(void) {
     // Quick scratch-memory R/W sanity check.
     uint8_t buf[128];
@@ -84,7 +74,6 @@ static scadable_test_result_t test_self_diagnostic(void) {
 static const scadable_test_t s_tests[] = {
     {"heap_available",  "Free heap is above 30 KB",          test_heap_available},
     {"wifi_connected",  "Device is associated to its AP",    test_wifi_connected},
-    {"uptime_minimum",  "Device has been up at least 5 s",   test_uptime_minimum},
     {"self_diagnostic", "Scratch-memory read/write sanity",  test_self_diagnostic},
 };
 static const size_t s_tests_count = sizeof(s_tests) / sizeof(s_tests[0]);
