@@ -77,8 +77,14 @@ void app_main(void) {
     heartbeat_start();
 
     // Liveness ticker so the dashboard sees a steady log stream.
+    // Auto-build smoke-test: this counter line gets a banner the
+    // first time around so we can confirm the on-push build hit
+    // the right device after rollout.
     int counter = 0;
     while (1) {
+        if (counter == 0) {
+            ESP_LOGI("boot", "── auto-build smoke test active ──");
+        }
         ESP_LOGI("tick", "tick %d", counter++);
         if ((counter % 10) == 0) {
             ESP_LOGW("checkpoint", "checkpoint reached at tick %d", counter);
