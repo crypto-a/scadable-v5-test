@@ -83,7 +83,7 @@ void app_main(void) {
     int counter = 0;
     while (1) {
         if (counter == 0) {
-            ESP_LOGI("boot", "── auto-build smoke test #2 — webhook live ──");
+            ESP_LOGI("boot", "── auto-build smoke test #3 — heartbeat gate ──");
         }
         ESP_LOGI("tick", "tick %d", counter++);
         if ((counter % 10) == 0) {
