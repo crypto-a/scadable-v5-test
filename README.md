@@ -1,4 +1,4 @@
-# scadable-v5-test (firmware)
+# scadable-v5-test (firmware) 
 
 Demo ESP-IDF v5.1 firmware for ESP32 classic. This repo is the build target
 for the SCADABLE dashboard — link it from any namespace's Settings page and
